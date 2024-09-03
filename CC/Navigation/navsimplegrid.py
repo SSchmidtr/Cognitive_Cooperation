@@ -1,6 +1,8 @@
-# Import necessary libraries
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from Environments.simplegridv2 import SimpleEnv
 import numpy as np  # For numerical operations
-from simplegridv2 import SimpleEnv  # Import the custom environment
 import matplotlib.pyplot as plt  # For plotting
 
 class PolicyGradientAgent:
