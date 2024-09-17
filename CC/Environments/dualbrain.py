@@ -8,10 +8,6 @@ from Environments.simplegridv2 import SimpleEnv
 from minigrid.core.world_object import Door, Goal, Key, Wall, Lava, Floor
 from minigrid.manual_control import ManualControl
 
-#TODO: El Floor solamente puede dar 1 reward por episodio, no por cada vez que se pise
-#TODO: Revisar que la asiganción y el action space tenga la asignación correcta
-#TODO: ¿Agregar reward negativo a la pared?
-
 class DualBrainSimpleEnv(SimpleEnv):
     def __init__(self, render_mode="human"):
         super().__init__(render_mode=render_mode)
@@ -20,8 +16,8 @@ class DualBrainSimpleEnv(SimpleEnv):
             'brain1': spaces.Box(low=0, high=255, shape=(self.height, self.width, 3), dtype=np.uint8),
             'brain2': spaces.Box(low=0, high=255, shape=(self.height, self.width, 3), dtype=np.uint8)
         })
-        self.cumulative_reward_brain1 = 0
-        self.cumulative_reward_brain2 = 0
+        self.brain1_cumulative_reward = 0
+        self.brain2_cumulative_reward = 0
 
     def get_dual_obs(self):
         grid = self.grid.encode()
@@ -48,59 +44,72 @@ class DualBrainSimpleEnv(SimpleEnv):
         }
 
     def reset(self, seed=None, options=None):
-        observation, info = super().reset(seed=seed, options=None)
+        self.stepped_floors = set()  # Inicializar el conjunto de pisos visitados
+        observation, info = super().reset(seed=seed, options=options)
+        self._place_agent()  # Colocar al agente en una nueva posición aleatoria
+        self.brain1_cumulative_reward = 0
+        self.brain2_cumulative_reward = 0
         dual_obs = self.get_dual_obs()
-        self.cumulative_reward_brain1 = 0
-        self.cumulative_reward_brain2 = 0
-        print("\n--- Environment Reset ---")
-        print("Brain 1 Observation:")
-        print(dual_obs['brain1'])
-        print("\nBrain 2 Observation:")
-        print(dual_obs['brain2'])
         return dual_obs, info
 
     def step(self, action):
-        observation, reward, terminated, truncated, info = super().step(action)
+        # Llamamos al método step de la clase padre, pero ignoramos el reward
+        obs, _, terminated, truncated, info = super().step(action)
         
-        obs = self.get_dual_obs()
-        
+        dual_obs = self.get_dual_obs()
         agent_cell = self.grid.get(*self.agent_pos)
-        
         brain1_reward = 0
         brain2_reward = 0
-        
-        if isinstance(agent_cell, Lava):
-            brain1_reward = -1  # Penalización por lava
-        elif isinstance(agent_cell, Floor):
-            brain1_reward = 0.1  # Pequeña recompensa positiva por moverse en el suelo
-        elif isinstance(agent_cell, Goal):
-            brain2_reward = 1  # Recompensa por alcanzar la meta
 
-        self.cumulative_reward_brain1 += brain1_reward
-        self.cumulative_reward_brain2 += brain2_reward
+        # Recompensas y penalizaciones basadas en la celda actual
+        if agent_cell is not None and agent_cell.type == 'lava':
+            brain1_reward -= 1  # Penalización por lava
+            terminated = True
+            print(f"Stepped on Lava! Negative reward: {brain1_reward}")
+        elif agent_cell is not None and agent_cell.type == 'floor' and agent_cell.color == 'blue':
+            if self.agent_pos not in self.stepped_floors:
+                brain1_reward += 0.1  # Recompensa única por pisar un Floor
+                self.stepped_floors.add(self.agent_pos)
+                print(f"Stepped on new Floor! Positive reward: {brain1_reward}")
+            else:
+                print("Stepped on already visited Floor. No additional reward.")
+        elif agent_cell is not None and agent_cell.type == 'goal':
+            if len(self.stepped_floors) == len(self.key_positions):
+                brain2_reward += 1  # Recompensa por alcanzar la meta con todos los Floors visitados
+                terminated = True
+                print(f"Reached Goal with all Floors visited! Reward: {brain2_reward}")
+            else:
+                print("Reached Goal, but not all Floors collected.")
 
+        # Actualizar recompensas acumuladas e información
+        self.brain1_cumulative_reward += brain1_reward
+        self.brain2_cumulative_reward += brain2_reward
         info['brain1_reward'] = brain1_reward
         info['brain2_reward'] = brain2_reward
-        info['cumulative_brain1_reward'] = self.cumulative_reward_brain1
-        info['cumulative_brain2_reward'] = self.cumulative_reward_brain2
+        info['cumulative_brain1_reward'] = self.brain1_cumulative_reward
+        info['cumulative_brain2_reward'] = self.brain2_cumulative_reward
         
         total_reward = brain1_reward + brain2_reward
-        
+        reward = total_reward  # Asignamos nuestra recompensa total
+
+        # Imprimir información para depuración
         print("\n--- Step Information ---")
         print(f"Action taken: {action}")
-        print("Brain 1 Observation:")
-        print(obs['brain1'])
-        print("\nBrain 2 Observation:")
-        print(obs['brain2'])
-        print(f"\nBrain 1 Reward: {brain1_reward}")
-        print(f"Brain 2 Reward: {brain2_reward}")
-        print(f"Cumulative Brain 1 Reward: {self.cumulative_reward_brain1}")
-        print(f"Cumulative Brain 2 Reward: {self.cumulative_reward_brain2}")
-        print(f"Total Reward: {total_reward}")
+        print(f"Agent position: {self.agent_pos}")
+        print(f"Agent direction: {self.agent_dir}")
+        print(f"Agent cell: {agent_cell}")
+        print(f"Stepped floors: {self.stepped_floors}")
+        print(f"Number of keys (Floors): {len(self.key_positions)}")
+        print(f"Number of floors stepped: {len(self.stepped_floors)}")
         print(f"Terminated: {terminated}")
         print(f"Truncated: {truncated}")
+        print(f"\nBrain 1 Reward: {brain1_reward}")
+        print(f"Brain 2 Reward: {brain2_reward}")
+        print(f"Cumulative Brain 1 Reward: {self.brain1_cumulative_reward}")
+        print(f"Cumulative Brain 2 Reward: {self.brain2_cumulative_reward}")
+        print(f"Total Reward: {total_reward}")
         
-        return obs, total_reward, terminated, truncated, info
+        return dual_obs, reward, terminated, truncated, info
 
 class CustomManualControl(ManualControl):
     def __init__(self, env, seed=None):

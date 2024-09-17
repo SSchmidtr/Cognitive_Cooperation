@@ -5,6 +5,7 @@ from Environments.simplegridv2 import SimpleEnv
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 class PolicyGradientAgent:
     def __init__(self, env, learning_rate=0.01, gamma=0.99):
         self.env = env
@@ -22,7 +23,7 @@ class PolicyGradientAgent:
         return np.random.choice(self.action_size, p=probs)
 
     def softmax(self, x):
-        exp_x = np.exp(x - np.max(x))  # Resta el máximo para estabilidad numérica
+        exp_x = np.exp(x - np.max(x)) 
         return exp_x / exp_x.sum()
 
     def update_policy(self, episode):
@@ -46,7 +47,7 @@ class PolicyGradientAgent:
             # Actualizar la política
             self.policy[state_key] += self.learning_rate * discounted_rewards[t] * grad
 
-    def train(self, num_episodes=10):
+    def train(self, num_episodes=500):
         reward_history = []
         for episode in range(num_episodes):
             state, _ = self.env.reset()
@@ -75,7 +76,7 @@ def main():
     plt.title("Rewards over Episodes")
     plt.xlabel("Episode")
     plt.ylabel("Total Reward")
-    plt.show()
+    plt.savefig('simplebrain_rewards.png')
 
     # Test the trained agent
     state, _ = env.reset()

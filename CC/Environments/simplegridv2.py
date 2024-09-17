@@ -5,19 +5,18 @@ from minigrid.core.mission import MissionSpace
 from minigrid.core.world_object import Door, Goal, Key, Wall, Lava, Floor
 from minigrid.manual_control import ManualControl
 from minigrid.minigrid_env import MiniGridEnv
+import random
 
 class SimpleEnv(MiniGridEnv):
     def __init__(
         self,
         size=15,
-        agent_start_pos=(1, 1),
-        agent_start_dir=0,
         max_steps: int | None = None,
         **kwargs,
     ):
-        self.agent_start_pos = agent_start_pos
-        self.agent_start_dir = agent_start_dir
+        self.size = size
         self.key_positions = []
+        self.lava_positions = []
         
         mission_space = MissionSpace(mission_func=self._gen_mission)
         
@@ -64,8 +63,8 @@ class SimpleEnv(MiniGridEnv):
             self.grid.set(x, y, None)
         
         # Place 5 fixed lava positions
-        lava_positions = [(4, 1), (6, 6), (10, 11), (4, 12), (12, 4)]
-        for x, y in lava_positions:
+        self.lava_positions = [(4, 1), (6, 6), (10, 11), (4, 12), (12, 4)]
+        for x, y in self.lava_positions:
             self.put_obj(Lava(), x, y)
         
         # Place 5 fixed floor tiles (blue keys)
@@ -74,19 +73,33 @@ class SimpleEnv(MiniGridEnv):
             self.put_obj(Floor('blue'), x, y)
         
         # Place a goal square in the bottom-right corner
-        self.put_obj(Goal(), width - 2, height - 2)
+        self.goal_pos = (width - 2, height - 2)
+        self.put_obj(Goal(), *self.goal_pos)
         
-        if self.agent_start_pos is not None:
-            self.agent_pos = self.agent_start_pos
-            self.agent_dir = self.agent_start_dir
-        else:
-            self.place_agent()
+        self._place_agent()
         
         self.mission = "Collect all keys and reach the goal"
 
+    def _place_agent(self):
+        while True:
+            x = random.randint(1, self.size - 2)
+            y = random.randint(1, self.size - 2)
+            pos = (x, y)
+            
+            # Check if the position is empty (not wall, lava, floor, or goal)
+            if (self.grid.get(*pos) is None and
+                pos not in self.lava_positions and
+                pos not in self.key_positions and
+                pos != self.goal_pos):
+                self.agent_pos = pos
+                self.agent_dir = random.randint(0, 3)  # Random direction
+                break
+
     def reset(self, **kwargs):
         self.stepped_floors = set()
-        return super().reset(**kwargs)
+        obs = super().reset(**kwargs)
+        self._place_agent()  # Place the agent in a new random position
+        return obs
 
     def step(self, action):
         obs, reward, terminated, truncated, info = super().step(action)

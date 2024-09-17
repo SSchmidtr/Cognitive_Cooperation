@@ -99,7 +99,7 @@ def main():
     plt.title("Rewards over Episodes")
     plt.xlabel("Episode")
     plt.ylabel("Total Reward")
-    plt.show()
+    plt.savefig('dualbrain_rewards.png')
 
     # Test the trained agent
     state, _ = env.reset()
