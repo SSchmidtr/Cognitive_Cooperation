@@ -1,3 +1,4 @@
+
 # Importamos las bibliotecas necesarias
 import random  # Para generar números aleatorios
 from typing import Optional  # Para definir tipos opcionales de variables

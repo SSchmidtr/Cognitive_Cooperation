@@ -4,6 +4,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Añadimos la ruta del archivo
 from Environments.combined_env import CombinedEnv  # Importamos el entorno que hemos definido
+import pickle  # Para guardar y cargar objetos
 
 # Clase que define una política de un cerebro basado en aprendizaje por refuerzo
 class BrainPolicy:
@@ -29,6 +30,12 @@ class BrainPolicy:
         else:
             probs = self.softmax(self.policy[state_key])  # Explotación: seleccionamos la mejor acción según la política
             return np.random.choice(self.action_space.n, p=probs)
+        
+    # Función para guardar la política entrenada
+    def save_policy(self, filename):
+        with open(filename, 'wb') as f:
+            pickle.dump(self.policy, f)
+    
 
     # Función que aplica softmax para convertir las preferencias en probabilidades
     def softmax(self, x):
@@ -129,6 +136,10 @@ class CombinedAgent:
             if (episode + 1) % 100 == 0:  # Imprimir cada 100 episodios
                 print(f"Episode {episode + 1}/{training_episodes}, Total Reward: {total_reward}")
         
+        # Guardar las políticas al final del entrenamiento
+        self.brain1.save_policy('brain1_policy.pkl')
+        self.brain2.save_policy('brain2_policy.pkl')
+        print("Policies saved.")
         print("Training completed.")  # Indicamos que ha terminado el entrenamiento
 
         # Graficamos la pérdida de ambos cerebros
@@ -177,8 +188,8 @@ def plot_trend_line(rewards):
 def main():
     env = CombinedEnv(render_mode='human')  # Creamos el entorno
     agent = CombinedAgent(env)  # Creamos el agente combinado
-    num_episodes = 5000  # Definimos el número total de episodios (entrenamiento + pruebas)
-    reward_history, avg_test_reward = agent.train(num_episodes=num_episodes, test_ratio=0.01)  # Entrenamos al agente
+    num_episodes = 10000  # Definimos el número total de episodios (entrenamiento + pruebas)
+    reward_history, avg_test_reward = agent.train(num_episodes=num_episodes, test_ratio=0.001)  # Entrenamos al agente
     
     # Graficamos los rewards y la línea de tendencia
     plot_trend_line(reward_history)
