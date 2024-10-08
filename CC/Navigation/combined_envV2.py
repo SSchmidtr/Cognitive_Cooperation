@@ -124,7 +124,8 @@ class CombinedEnv(MiniGridEnv):
         move_vector = self.get_move_vector(brain1_action, brain2_action)
         new_pos = (self.agent_pos[0] + move_vector[0], self.agent_pos[1] + move_vector[1])
 
-        reward = 0
+        reward_brain1 = 0  # Recompensa para cerebro 1
+        reward_brain2 = 0  # Recompensa para cerebro 2
         terminated = False
         truncated = False
         info = {}
@@ -135,24 +136,25 @@ class CombinedEnv(MiniGridEnv):
                 self.agent_pos = new_pos
                 self.agent_dir = 0
         else:
-            reward -= 0.5
+            reward_brain1 -= 0.5  # Penalización para cerebro 1 si golpea una pared
             terminated = True
 
         current_cell = self.grid.get(*self.agent_pos)
 
         if isinstance(current_cell, Lava):
-            reward -= 0.3
+            reward_brain2 -= 0.3  # Penalización para cerebro 2 si toca lava
             terminated = True
         elif isinstance(current_cell, Floor):
             if self.agent_pos not in self.stepped_floors:
-                reward += 2
+                reward_brain2 += 2  # Recompensa para cerebro 2 por caminar en un nuevo piso
                 self.stepped_floors.add(self.agent_pos)
         elif isinstance(current_cell, Goal):
             if len(self.stepped_floors) == len(self.key_positions):
-                reward += 10
+                reward_brain1 += 10  # Recompensa para cerebro 1 por llegar a la meta después de recoger llaves
+                reward_brain2 += 10  # Recompensa para cerebro 2 por completar el objetivo
                 terminated = True
             else:
-                reward += 5
+                reward_brain1 += 5  # Recompensa parcial por llegar a la meta antes de recoger todas las llaves
                 terminated = True
 
         self.step_count += 1
@@ -160,7 +162,8 @@ class CombinedEnv(MiniGridEnv):
             truncated = True
 
         obs = self.gen_obs()
-        return obs, reward, terminated, truncated, info
+        return obs, (reward_brain1, reward_brain2), terminated, truncated, info
+
 
     def get_move_vector(self, brain1_action, brain2_action):
         dx = 0
