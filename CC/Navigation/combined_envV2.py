@@ -107,6 +107,18 @@ class CombinedEnv(MiniGridEnv):
 
         self.mission = "Evitar la lava, recoger llaves, y llegar a la meta"
 
+    def _place_agent(self):
+        """
+        Coloca al agente en una posición aleatoria dentro del grid, asegurándose de que no esté sobre una pared, llave, lava, o meta.
+        """
+        while True:
+            x = random.randint(1, self.size - 2)
+            y = random.randint(1, self.size - 2)
+            if self.grid.get(x, y) is None:  # Asegúrate de que la celda esté vacía
+                self.agent_pos = (x, y)
+                self.agent_dir = random.randint(0, 3)  # Dirección aleatoria (norte, sur, este, oeste)
+                break
+
     def step(self, action):
         brain1_action, brain2_action = self.combined_actions[action]
         move_vector = self.get_move_vector(brain1_action, brain2_action)
@@ -122,8 +134,6 @@ class CombinedEnv(MiniGridEnv):
             if cell is None or cell.can_overlap():
                 self.agent_pos = new_pos
                 self.agent_dir = 0
-            else:
-                reward -= 0.1
         else:
             reward -= 0.5
             terminated = True
@@ -179,10 +189,6 @@ class CombinedEnv(MiniGridEnv):
         return dx, dy
 
     def reset(self, **kwargs):
-        print("Reseteando el entorno...")
-        print("Espacio de acción brain1:", self.brain1_action_space)
-        print("Espacio de acción brain2:", self.brain2_action_space)
-        print("Tamaño del grid:", self.size)
         self.step_count = 0
         self.stepped_floors = set()
         obs = super().reset(**kwargs)

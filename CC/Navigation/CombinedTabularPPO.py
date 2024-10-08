@@ -107,15 +107,29 @@ class CombinedAgent:
             self.brain2.update_policy(episode_memory2)
             reward_history.append(total_reward)
 
-            if (episode + 1) % 100 == 0:
-                print(f"Episode {episode + 1}/{num_episodes}, Total Reward: {total_reward}")
+            print(f"Episode {episode + 1}/{num_episodes}, Total Reward: {total_reward}")
 
         self.brain1.save_policy('brain1_policy.pkl')
         self.brain2.save_policy('brain2_policy.pkl')
-        self.brain1.plot_loss()
-        self.brain2.plot_loss()
+        self.plot_trend_line(reward_history)
 
         return reward_history
+
+    # Función que grafica la tendencia de las recompensas durante los episodios de entrenamiento
+    def plot_trend_line(self, rewards):
+        plt.figure()
+        plt.plot(rewards, label="Reward")  # Graficamos las recompensas
+
+        # Calculamos una línea de tendencia usando el promedio móvil
+        window_size = 50  # Tamaño de la ventana para el promedio móvil
+        moving_avg = np.convolve(rewards, np.ones(window_size) / window_size, mode='valid')
+
+        plt.plot(range(len(moving_avg)), moving_avg, color='red', label="Trend (Moving Average)")
+        plt.title("Rewards over Training Episodes with Trend")
+        plt.xlabel("Episode")
+        plt.ylabel("Total Reward")
+        plt.legend()
+        plt.show()
 
 def main():
     env = CombinedEnv(render_mode=None)
