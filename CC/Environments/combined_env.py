@@ -49,18 +49,12 @@ class CombinedEnv(MiniGridEnv):
         #TODO: Aqui el action space acumulado debería de tener movimientos en las 4 direcciones además de diagonales
         #Cada acción es una combinación de dos acciones es suena buena idea
         # Definimos el espacio de acciones para cada cerebro
-        self.brain1_action_space = spaces.Discrete(4)  # Cerebro 1: ninguna acción, norte, sur #TODO: Aqui los 2 cerebros tienen como action space Norte, SUR, ESTE, OESTE
-        self.brain2_action_space = spaces.Discrete(4)  # Cerebro 2: ninguna acción, este, oeste
+        self.brain1_action_space = spaces.Discrete(4)  # 0: Norte, 1: Sur, 2: Este, 3: Oeste
+        self.brain2_action_space = spaces.Discrete(4)  # 0: Norte, 1: Sur, 2: Este, 3: Oeste
 
-        # Combinamos las acciones de ambos cerebros en un solo espacio de acciones
-        self.combined_actions = []
-        for a1 in range(self.brain1_action_space.n):
-            for a2 in range(self.brain2_action_space.n):
-                self.combined_actions.append((a1, a2))  # Cada acción es una combinación de dos acciones
-        self.action_space = spaces.Discrete(len(self.combined_actions))  # El espacio de acciones combinadas
-
-        # El espacio de observación ya está definido en la clase base MiniGridEnv
-        #TODO: Validar que el observation space sea diferenta para cada cerebro, uno ve paredes y meta y el otro ve lava y llaves
+        # Combinamos las acciones de ambos cerebros
+        self.combined_actions = [(a1, a2) for a1 in range(4) for a2 in range(4)]
+        self.action_space = spaces.Discrete(len(self.combined_actions))
 
     # Función que genera la misión o tarea del entorno.
     @staticmethod
@@ -148,6 +142,7 @@ class CombinedEnv(MiniGridEnv):
 
         # Mapear las acciones a un vector de movimiento
         move_vector = self.get_move_vector(brain1_action, brain2_action)
+        print(f"Env Step - Brain1 Action: {brain1_action}, Brain2 Action: {brain2_action}, Move Vector: {move_vector}")
 
         # Calculamos la nueva posición del agente según el movimiento
         new_pos = (self.agent_pos[0] + move_vector[0], self.agent_pos[1] + move_vector[1])
@@ -193,6 +188,12 @@ class CombinedEnv(MiniGridEnv):
                 terminated = True  # Terminamos el episodio
                 print("Reached Goal, but not all keys collected.")
 
+        if brain1_action == brain2_action:
+            reward_brain1 += 0.2
+            reward_brain2 += 0.2
+            print("Brains agreed on action. Small positive reward added.")
+
+
         # Incrementamos el contador de pasos
         self.step_count += 1
         if self.step_count >= self.max_steps:  # Si alcanzamos el límite de pasos
@@ -202,31 +203,26 @@ class CombinedEnv(MiniGridEnv):
         return obs, reward, terminated, truncated, info  # Retornamos los resultados del paso
 
     def get_move_vector(self, brain1_action, brain2_action):
-        dx = 0  # Movimiento en el eje x (este-oeste)
-        dy = 0  # Movimiento en el eje y (norte-sur)
+        action_to_vector = {
+            0: (0, -1),  # Norte
+            1: (0, 1),   # Sur
+            2: (1, 0),   # Este
+            3: (-1, 0),  # Oeste
+        }
 
-        # Acciones del Cerebro 1 (north=0, south=1, east=2, west=3)
-        if brain1_action == 0:
-            dy = -1  # norte (disminuir y)
-        elif brain1_action == 1:
-            dy = 1   # sur (aumentar y)
-        elif brain1_action == 2:
-            dx = 1   # este (aumentar x)
-        elif brain1_action == 3:
-            dx = -1  # oeste (disminuir x)
+        dx1, dy1 = action_to_vector[brain1_action]
+        dx2, dy2 = action_to_vector[brain2_action]
 
-        # Acciones del Cerebro 2 (north=0, south=1, east=2, west=3)
-        if brain2_action == 0:
-            dy = -1  # norte (disminuir y)
-        elif brain2_action == 1:
-            dy = 1   # sur (aumentar y)
-        elif brain2_action == 2:
-            dx = 1   # este (aumentar x)
-        elif brain2_action == 3:
-            dx = -1  # oeste (disminuir x)
+        # Sumar los vectores de movimiento
+        dx = dx1 + dx2
+        dy = dy1 + dy2
 
-        return (dx, dy)  # Retornamos el vector de movimiento
+        # Limitar el movimiento a [-1, 0, 1] en cada eje
+        dx = max(-1, min(1, dx))
+        dy = max(-1, min(1, dy))
 
+        move_vector = (dx, dy)
+        return move_vector
 
     # Función para cerrar el entorno y limpiar recursos
     def close(self):

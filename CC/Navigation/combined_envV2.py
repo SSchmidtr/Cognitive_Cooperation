@@ -68,30 +68,45 @@ class CombinedEnv(MiniGridEnv):
         self.grid = Grid(width, height)
         # Rodeamos el grid con paredes
         self.grid.wall_rect(0, 0, width, height)
-
+        
         # Colocamos paredes verticales en posiciones fijas
         for y in range(1, height-1):
             self.put_obj(Wall(), 3, y)
             self.put_obj(Wall(), 7, y)
             self.put_obj(Wall(), 11, y)
-
+        
+        # Colocamos paredes horizontales en posiciones fijas
+        for x in range(1, width-1):
+            self.put_obj(Wall(), x, 3)
+            self.put_obj(Wall(), x, 7)
+        
+        # Creamos aperturas en las paredes para que el agente pueda pasar
+        openings = [(3, 2), (3, 6), (3, 10), 
+                    (7, 4), (7, 8), (7, 12),
+                    (11, 2), (11, 6), (11, 10),
+                    (2, 3), (6, 3), (10, 3),
+                    (4, 7), (8, 7), (12, 7),
+                    (2, 11), (6, 11), (10, 11)]
+        for x, y in openings:
+            self.grid.set(x, y, None)  # Quitamos paredes en estas posiciones para crear las aperturas
+        
         # Colocamos 5 posiciones fijas de lava en el grid
         self.lava_positions = [(4, 1), (6, 6), (10, 11), (4, 12), (12, 4)]
         for x, y in self.lava_positions:
             self.put_obj(Lava(), x, y)  # Colocamos objetos de lava en las posiciones asignadas
-
+        
         # Colocamos 5 tiles fijos de piso de color azul (simulando llaves)
         self.key_positions = [(1, 5), (5, 9), (9, 13), (13, 1), (9, 5)]
         for x, y in self.key_positions:
             self.put_obj(Floor('blue'), x, y)  # Colocamos las "llaves" como tiles de color azul
-
+        
         # Colocamos la meta (goal) en la esquina inferior derecha
         self.goal_pos = (width - 2, height - 2)
         self.put_obj(Goal(), *self.goal_pos)
-
+        
         # Colocamos al agente en una posición inicial aleatoria
         self._place_agent()
-
+        
         # Definimos la misión del agente
         self.mission = "Evitar la lava, pasar por los pisos, llegar a la meta"
 

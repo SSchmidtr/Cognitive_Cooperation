@@ -83,10 +83,13 @@ class CombinedAgent:
         self.brain2 = BrainPolicy(env.brain2_action_space)
 
     def get_combined_action(self, state):
-        action1, log_prob1, value1 = self.brain1.get_action(state['brain1'])
-        action2, log_prob2, value2 = self.brain2.get_action(state['brain2'])
-        combined_action = self.env.combined_actions.index((action1, action2))
-        return combined_action, log_prob1, log_prob2, value1, value2
+        brain_action1, log_prob1, value1 = self.brain1.get_action(state['brain1'])
+        brain_action2, log_prob2, value2 = self.brain2.get_action(state['brain2'])
+
+        # Encontrar el índice de la acción combinada
+        combined_action = self.env.combined_actions.index((brain_action1, brain_action2))
+        return combined_action, log_prob1, log_prob2, value1, value2, brain_action1, brain_action2
+
 
     def train(self, num_episodes):
         reward_history = []
@@ -98,14 +101,18 @@ class CombinedAgent:
             episode_memory1 = []
             episode_memory2 = []
             total_reward = 0
-            rewards = []
             values_brain1 = []
             values_brain2 = []
             log_probs_brain1 = []
             log_probs_brain2 = []
 
+            # Inicializamos listas para guardar las recompensas por cada cerebro
+            rewards_brain1 = []
+            rewards_brain2 = []
+
             while not done:
-                combined_action, log_prob1, log_prob2, value1, value2 = self.get_combined_action(state)
+                combined_action, log_prob1, log_prob2, value1, value2, brain1_action, brain2_action = self.get_combined_action(state)
+                print(f"Episode: {episode + 1}, Action: {combined_action}, Brain 1 Action: {brain1_action}, Brain 2 Action: {brain2_action}")
                 next_obs, reward, terminated, truncated, _ = self.env.step(combined_action)
                 next_state = next_obs
                 done = terminated or truncated
@@ -116,10 +123,13 @@ class CombinedAgent:
                 reward_brain1, reward_brain2 = reward  # Desempaquetar las recompensas de cada cerebro
                 total_reward += reward_brain1 + reward_brain2  # Sumar las recompensas de ambos cerebros
 
+                # Guardar las recompensas en las listas
+                rewards_brain1.append(reward_brain1)
+                rewards_brain2.append(reward_brain2)
+
                 # Guardar datos para actualizar la política
                 episode_memory1.append((state['brain1'], brain1_action))
                 episode_memory2.append((state['brain2'], brain2_action))
-                rewards.append(reward_brain1 + reward_brain2)  # Sumar las recompensas para el cálculo de ventajas
                 log_probs_brain1.append(log_prob1)
                 log_probs_brain2.append(log_prob2)
                 values_brain1.append(value1)
@@ -130,9 +140,10 @@ class CombinedAgent:
             # Al final del episodio, calculamos las ventajas y actualizamos la política
             next_value_brain1 = self.brain1.value_function[tuple(next_state['brain1'].flatten())] if not done else 0
             next_value_brain2 = self.brain2.value_function[tuple(next_state['brain2'].flatten())] if not done else 0
-
-            advantages_brain1, returns_brain1 = self.brain1.compute_advantages(rewards, values_brain1, next_value_brain1)
-            advantages_brain2, returns_brain2 = self.brain2.compute_advantages(rewards, values_brain2, next_value_brain2)
+            
+            # Al final del episodio, calculamos las ventajas y actualizamos la política
+            advantages_brain1, returns_brain1 = self.brain1.compute_advantages(rewards_brain1, values_brain1, next_value_brain1)
+            advantages_brain2, returns_brain2 = self.brain2.compute_advantages(rewards_brain2, values_brain2, next_value_brain2)
 
             self.brain1.update_policy(
                 [mem[0] for mem in episode_memory1],
@@ -155,7 +166,6 @@ class CombinedAgent:
         self.brain1.save_policy('brain1_policy.pkl')
         self.brain2.save_policy('brain2_policy.pkl')
         self.plot_trend_line(reward_history)
-
         return reward_history
 
     # Función para graficar la tendencia de recompensas durante los episodios
@@ -175,7 +185,7 @@ class CombinedAgent:
         plt.show()
 
     def main():
-        env = CombinedEnv(render_mode=None)
+        env = CombinedEnv(render_mode="human")
         agent = CombinedAgent(env)
         num_episodes = 10000
         reward_history = agent.train(num_episodes=num_episodes)
