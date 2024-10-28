@@ -20,7 +20,8 @@ class BrainPolicy:
             self.value_function[state_key] = 0.0
 
         # Calculamos las probabilidades de las acciones usando softmax
-        probs = self.softmax(self.policy[state_key])
+        logits = self.policy[state_key]
+        probs = self.softmax(logits)
         action = np.random.choice(self.action_space.n, p=probs)
         log_prob = np.log(probs[action])
 
@@ -41,27 +42,55 @@ class BrainPolicy:
         return advantages, returns
 
     def update_policy(self, states, actions, old_log_probs, returns, advantages):
+        max_inner_iterations = 10  # Establece un máximo para evitar ciclos infinitos
+
         for i, state in enumerate(states):
             state_key = tuple(state.flatten())
             if state_key not in self.policy:
                 self.policy[state_key] = np.zeros(self.action_space.n)
                 self.value_function[state_key] = 0.0
 
-            probs = self.softmax(self.policy[state_key])
-            new_log_prob = np.log(probs[actions[i]])
-            ratio = np.exp(new_log_prob - old_log_probs[i])
+            inner_iteration = 0
+            while True:
+                # Obtener los logits actuales
+                logits = self.policy[state_key]
+                probs = self.softmax(logits)
+                new_log_prob = np.log(probs[actions[i]] + 1e-8)  # Evitar log(0)
+                ratio = np.exp(new_log_prob - old_log_probs[i])
 
-            # PPO Clipping
-            surr1 = ratio * advantages[i]
-            surr2 = np.clip(ratio, 1 - self.epsilon, 1 + self.epsilon) * advantages[i]
-            actor_loss = -np.minimum(surr1, surr2)
+                # Verificar si el ratio está dentro del rango permitido
+                if 1 - self.epsilon <= ratio <= 1 + self.epsilon:
+                    # Calcular el actor loss
+                    surr = ratio * advantages[i]
+                    actor_loss = -surr
 
-            # Update policy and value function
-            self.policy[state_key] += self.learning_rate * actor_loss
-            self.value_function[state_key] += self.learning_rate * (returns[i] - self.value_function[state_key])
+                    # Calcular el gradiente del loss con respecto a los logits
+                    d_loss_d_prob = -advantages[i] * ratio
 
-        # Guardamos el loss acumulado
-        self.loss_history.append(actor_loss.sum())
+                    # Gradiente de la probabilidad con respecto a los logits
+                    d_prob_d_logits = probs.copy()
+                    d_prob_d_logits[actions[i]] -= 1
+
+                    # Gradiente total
+                    grad = d_loss_d_prob * d_prob_d_logits
+
+                    # Actualizar los logits (parámetros de la política)
+                    self.policy[state_key] -= self.learning_rate * grad
+
+                    # Actualizar la función de valor
+                    self.value_function[state_key] += self.learning_rate * (returns[i] - self.value_function[state_key])
+
+                    # Incrementar el contador de iteraciones
+                    inner_iteration += 1
+
+                    # Verificar si se alcanzó el máximo de iteraciones
+                    if inner_iteration >= max_inner_iterations:
+                        break
+                else:
+                    break
+
+            # Guardar el actor_loss para el historial
+            self.loss_history.append(actor_loss)
 
     def save_policy(self, filename):
         with open(filename, 'wb') as f:
@@ -74,7 +103,6 @@ class BrainPolicy:
         plt.xlabel("Episode")
         plt.ylabel("Loss")
         plt.show()
-
 
 class CombinedAgent:
     def __init__(self, env):
@@ -185,7 +213,7 @@ class CombinedAgent:
         plt.show()
 
     def main():
-        env = CombinedEnv(render_mode="human")
+        env = CombinedEnv()
         agent = CombinedAgent(env)
         num_episodes = 10000
         reward_history = agent.train(num_episodes=num_episodes)
