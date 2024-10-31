@@ -46,6 +46,7 @@ class BrainPolicy:
 
         for i, state in enumerate(states):
             state_key = tuple(state.flatten())
+
             if state_key not in self.policy:
                 self.policy[state_key] = np.zeros(self.action_space.n)
                 self.value_function[state_key] = 0.0
@@ -57,7 +58,10 @@ class BrainPolicy:
                 probs = self.softmax(logits)
                 new_log_prob = np.log(probs[actions[i]] + 1e-8)  # Evitar log(0)
                 ratio = np.exp(new_log_prob - old_log_probs[i])
-
+                print("ratio", ratio)
+                print("old", old_log_probs[i], np.exp(old_log_probs[i]))
+                print("new", new_log_prob, np.exp(new_log_prob))
+                print("adv", advantages[i])
                 # Verificar si el ratio está dentro del rango permitido
                 if 1 - self.epsilon <= ratio <= 1 + self.epsilon:
                     # Calcular el actor loss
@@ -65,17 +69,24 @@ class BrainPolicy:
                     actor_loss = -surr
 
                     # Calcular el gradiente del loss con respecto a los logits
-                    d_loss_d_prob = -advantages[i] * ratio
+                    d_loss_d_prob = -advantages[i] * ratio      
+                    # ratio = dprobdlogit / old_prob = new_prob[actions[i]]*(1-new_prob[actions[i]]) # para accion actions[i]
+                    # ratio = dprobdlogit / old_prob = -1*new_prob[actions[i]]*(softmax(self.policy[state_key])[[0,1,2,3] - actions[i]] )         # For the rest of actions at the same state
 
                     # Gradiente de la probabilidad con respecto a los logits
                     d_prob_d_logits = probs.copy()
+                    print("prev d prog d logits", d_prob_d_logits)
                     d_prob_d_logits[actions[i]] -= 1
+                    print("d prog d logits", d_prob_d_logits)
+                    # exit()
 
                     # Gradiente total
                     grad = d_loss_d_prob * d_prob_d_logits
-
+                    print("grad", grad)
                     # Actualizar los logits (parámetros de la política)
+                    print("prev policy", self.policy[state_key])
                     self.policy[state_key] -= self.learning_rate * grad
+                    print("policy", self.policy[state_key])
 
                     # Actualizar la función de valor
                     self.value_function[state_key] += self.learning_rate * (returns[i] - self.value_function[state_key])
@@ -138,10 +149,11 @@ class CombinedAgent:
             rewards_brain1 = []
             rewards_brain2 = []
 
-            while not done:
+            while not done:     # Check that this t-samples of rewards is less than the total steps in the episode, so that the final V_t has the purpose of reducing long term variance
                 combined_action, log_prob1, log_prob2, value1, value2, brain1_action, brain2_action = self.get_combined_action(state)
                 print(f"Episode: {episode + 1}, Action: {combined_action}, Brain 1 Action: {brain1_action}, Brain 2 Action: {brain2_action}")
                 next_obs, reward, terminated, truncated, _ = self.env.step(combined_action)
+                input("press")
                 next_state = next_obs
                 done = terminated or truncated
 
@@ -212,17 +224,17 @@ class CombinedAgent:
         plt.legend()
         plt.show()
 
-    def main():
-        env = CombinedEnv()
-        agent = CombinedAgent(env)
-        num_episodes = 10000
-        reward_history = agent.train(num_episodes=num_episodes)
+def main():
+    env = CombinedEnv(render_mode="human")
+    agent = CombinedAgent(env)
+    num_episodes = 10000
+    reward_history = agent.train(num_episodes=num_episodes)
 
-        plt.plot(reward_history)
-        plt.xlabel("Episode")
-        plt.ylabel("Total Reward")
-        plt.title("Training Rewards over Episodes")
-        plt.show()
+    plt.plot(reward_history)
+    plt.xlabel("Episode")
+    plt.ylabel("Total Reward")
+    plt.title("Training Rewards over Episodes")
+    plt.show()
 
 if __name__ == "__main__":
-    CombinedAgent.main()
+    main()

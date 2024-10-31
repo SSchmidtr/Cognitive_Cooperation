@@ -61,6 +61,9 @@ class CombinedEnv(MiniGridEnv):
     @staticmethod
     def _gen_mission():
         return "Evitar la lava, pasar por los pisos, llegar a la meta"
+    
+    def calc_state(self,agent_pos, width, height, direction):
+        return (((agent_pos[1]-1) * (height-2) + (agent_pos[0]-1)) * 10) + direction
 
     # Función que genera el grid (la cuadrícula donde el agente se moverá)
     def _gen_grid(self, width, height):
@@ -112,6 +115,9 @@ class CombinedEnv(MiniGridEnv):
 
     # Función que coloca al agente en una posición aleatoria del grid
     def _place_agent(self):
+        self.agent_pos = (12,12)
+        self.agent_dir = random.randint(0, 3)
+        return
         while True:
             # Elegimos posiciones aleatorias dentro de los límites del grid
             x = random.randint(1, self.size - 2)
@@ -159,9 +165,11 @@ class CombinedEnv(MiniGridEnv):
     def step(self, action):
         # Dividimos la acción combinada en las acciones de los dos cerebros
         brain1_action, brain2_action = self.combined_actions[action]
+        print(brain1_action, brain2_action)
 
         # Mapear las acciones a un vector de movimiento
         move_vector = self.get_move_vector(brain1_action, brain2_action)
+        print(move_vector)
 
         # Calculamos la nueva posición del agente según el movimiento
         new_pos = (self.agent_pos[0] + move_vector[0], self.agent_pos[1] + move_vector[1])
@@ -176,6 +184,7 @@ class CombinedEnv(MiniGridEnv):
         # Verificamos si la nueva posición está dentro de los límites del grid
         if 0 <= new_pos[0] < self.grid.width and 0 <= new_pos[1] < self.grid.height:
             cell = self.grid.get(*new_pos)
+            print(cell, new_pos)
             if cell is None or cell.can_overlap():
                 self.agent_pos = new_pos  # Movemos el agente a la nueva posición
                 self.agent_dir = 0  # Actualizamos la dirección del agente 
@@ -184,6 +193,7 @@ class CombinedEnv(MiniGridEnv):
 
         # Obtenemos el objeto en la celda actual donde está el agente
         current_cell = self.grid.get(*self.agent_pos)
+        print("cur cell", current_cell, self.agent_pos)
 
         # Lógica para recompensas basadas en el tipo de celda en la que está el agente
         if isinstance(current_cell, Lava):  # Si el agente pisa lava
@@ -205,6 +215,9 @@ class CombinedEnv(MiniGridEnv):
         self.step_count += 1
         if self.step_count >= self.max_steps:  # Si alcanzamos el límite de pasos
             truncated = True  # Truncamos el episodio
+
+        if self.render_mode == "human":
+            self.render()
 
         obs = self.gen_obs()  # Generamos la nueva observación
         return obs, (reward_brain1, reward_brain2), terminated, truncated, info  # Retornamos los resultados del paso
