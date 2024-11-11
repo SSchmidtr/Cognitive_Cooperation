@@ -43,52 +43,50 @@ class BrainPolicy:
 
     def update_policy(self, states, actions, old_log_probs, returns, advantages):
         max_inner_iterations = 10  # Establece un máximo para evitar ciclos infinitos
-
+    
         for i, state in enumerate(states):
             state_key = tuple(state.flatten())
             if state_key not in self.policy:
                 self.policy[state_key] = np.zeros(self.action_space.n)
                 self.value_function[state_key] = 0.0
-
+    
             inner_iteration = 0
             while True:
                 # Obtener los logits actuales
                 logits = self.policy[state_key]
                 probs = self.softmax(logits)
-                new_log_prob = np.log(probs[actions[i]] + 1e-8)  # Evitar log(0)
-                ratio = np.exp(new_log_prob - old_log_probs[i])
-
-                # Verificar si el ratio está dentro del rango permitido
-                if 1 - self.epsilon <= ratio <= 1 + self.epsilon:
+                new_prob = probs[actions[i]]
+                old_prob = np.exp(old_log_probs[i])
+                ratio = new_prob / old_prob
+    
+                # Verificar las condiciones de clipping según el signo del advantage
+                if (advantages[i] >= 0 and ratio <= 1 + self.epsilon) or \
+                (advantages[i] < 0 and ratio >= 1 - self.epsilon):
                     # Calcular el actor loss
                     surr = ratio * advantages[i]
                     actor_loss = -surr
-
+    
                     # Calcular el gradiente del loss con respecto a los logits
-                    d_loss_d_prob = -advantages[i] * ratio
-
-                    # Gradiente de la probabilidad con respecto a los logits
-                    d_prob_d_logits = probs.copy()
-                    d_prob_d_logits[actions[i]] -= 1
-
-                    # Gradiente total
-                    grad = d_loss_d_prob * d_prob_d_logits
-
+                    one_hot = np.zeros_like(probs)
+                    one_hot[actions[i]] = 1
+                    delta_vector = one_hot - probs
+                    grad = (advantages[i] / old_prob) * new_prob * delta_vector
+    
                     # Actualizar los logits (parámetros de la política)
-                    self.policy[state_key] -= self.learning_rate * grad
-
+                    self.policy[state_key] += self.learning_rate * grad
+    
                     # Actualizar la función de valor
                     self.value_function[state_key] += self.learning_rate * (returns[i] - self.value_function[state_key])
-
+    
                     # Incrementar el contador de iteraciones
                     inner_iteration += 1
-
+    
                     # Verificar si se alcanzó el máximo de iteraciones
                     if inner_iteration >= max_inner_iterations:
                         break
                 else:
                     break
-
+    
             # Guardar el actor_loss para el historial
             self.loss_history.append(actor_loss)
 
@@ -202,7 +200,7 @@ class CombinedAgent:
         plt.plot(rewards, label="Reward")  # Graficamos las recompensas
 
         # Calculamos una línea de tendencia usando el promedio móvil
-        window_size = 50  # Tamaño de la ventana para el promedio móvil
+        window_size = 100  # Tamaño de la ventana para el promedio móvil
         moving_avg = np.convolve(rewards, np.ones(window_size) / window_size, mode='valid')
 
         plt.plot(range(len(moving_avg)), moving_avg, color='red', label="Trend (Moving Average)")
@@ -213,9 +211,9 @@ class CombinedAgent:
         plt.show()
 
     def main():
-        env = CombinedEnv()
+        env = CombinedEnv()#render_mode='human')
         agent = CombinedAgent(env)
-        num_episodes = 10000
+        num_episodes = 12000
         reward_history = agent.train(num_episodes=num_episodes)
 
         plt.plot(reward_history)

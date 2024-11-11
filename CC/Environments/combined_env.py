@@ -22,7 +22,7 @@ class CombinedEnv(MiniGridEnv):
         self,
         size=15,  # Tamaño del grid (15x15 por defecto)
         max_steps: Optional[int] = None,  # Máximo número de pasos permitidos (opcional)
-        render_mode=None,  # Modo de renderizado (por defecto, no se renderiza)
+        render_mode="Human",  # Modo de renderizado (por defecto, no se renderiza)
         **kwargs,  # Cualquier argumento adicional
     ):
         self.size = size  # Guardamos el tamaño del grid
@@ -113,11 +113,14 @@ class CombinedEnv(MiniGridEnv):
     def _place_agent(self):
         while True:
             # Elegimos posiciones aleatorias dentro de los límites del grid
-            x = random.randint(1, self.size - 2)
-            y = random.randint(1, self.size - 2)
-            pos = (x, y)
+            #x = random.randint(1, self.size - 2) #TODO: Poner un valor fijo en lugar de un random para que el agente salga de una posición fija
+            #y = random.randint(1, self.size - 2)
+            x = 12
+            y = 12
+            self.agent_pos = (x, y)
 
             # Aseguramos que la posición esté vacía y no tenga obstáculos
+            '''
             if (
                 self.grid.get(*pos) is None and  # Que no haya objetos en esa posición
                 pos not in self.lava_positions and  # Que no haya lava en esa posición
@@ -126,7 +129,7 @@ class CombinedEnv(MiniGridEnv):
             ):
                 self.agent_pos = pos  # Guardamos la posición del agente
                 self.agent_dir = random.randint(0, 3)  # Asignamos una dirección aleatoria (norte, sur, este, oeste)
-                break  # Salimos del bucle una vez que encontramos una posición válida
+                break  # Salimos del bucle una vez que encontramos una posición válida'''
 
     # Función que reinicia el entorno, se llama al inicio de cada episodio
     def reset(self, **kwargs):
@@ -137,6 +140,7 @@ class CombinedEnv(MiniGridEnv):
 
     # Función que procesa un paso del agente en el entorno
     def step(self, action):
+        self.render_mode = "human"  # Modo de renderizado para visualizar el entorno
         # Dividimos la acción combinada en las acciones de los dos cerebros
         brain1_action, brain2_action = self.combined_actions[action]
 

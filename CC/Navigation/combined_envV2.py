@@ -17,7 +17,7 @@ class CombinedEnv(MiniGridEnv):
         self,
         size=15,  # Tamaño del grid (15x15 por defecto)
         max_steps: Optional[int] = None,  # Máximo número de pasos permitidos (opcional)
-        render_mode=None,  # Modo de renderizado (por defecto, no se renderiza)
+        render_mode="Human",  # Modo de renderizado (por defecto, no se renderiza)
         **kwargs,  # Cualquier argumento adicional
     ):
         self.size = size  # Guardamos el tamaño del grid
@@ -157,6 +157,8 @@ class CombinedEnv(MiniGridEnv):
 
     # Función que procesa un paso del agente en el entorno
     def step(self, action):
+        if self.render_mode == "human":
+            self.render()
         # Dividimos la acción combinada en las acciones de los dos cerebros
         brain1_action, brain2_action = self.combined_actions[action]
 
