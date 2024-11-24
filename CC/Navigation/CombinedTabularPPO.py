@@ -213,14 +213,8 @@ class CombinedAgent:
     def main():
         env = CombinedEnv()#render_mode='human')
         agent = CombinedAgent(env)
-        num_episodes = 12000
+        num_episodes = 000
         reward_history = agent.train(num_episodes=num_episodes)
-
-        plt.plot(reward_history)
-        plt.xlabel("Episode")
-        plt.ylabel("Total Reward")
-        plt.title("Training Rewards over Episodes")
-        plt.show()
 
 if __name__ == "__main__":
     CombinedAgent.main()

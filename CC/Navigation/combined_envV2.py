@@ -114,9 +114,9 @@ class CombinedEnv(MiniGridEnv):
     def _place_agent(self):
         while True:
             # Elegimos posiciones aleatorias dentro de los límites del grid
-            x = random.randint(1, self.size - 2)
-            y = random.randint(1, self.size - 2)
-            pos = (x, y)
+            #x = random.randint(1, self.size - 2)
+            #y = random.randint(1, self.size - 2)
+            pos = (12, 8)
 
             # Aseguramos que la posición esté vacía y no tenga obstáculos
             if (
@@ -175,14 +175,15 @@ class CombinedEnv(MiniGridEnv):
         truncated = False
         info = {}
 
-        # Verificamos si la nueva posición está dentro de los límites del grid
+# Verificamos si la nueva posición está dentro de los límites del grid
         if 0 <= new_pos[0] < self.grid.width and 0 <= new_pos[1] < self.grid.height:
             cell = self.grid.get(*new_pos)
             if cell is None or cell.can_overlap():
                 self.agent_pos = new_pos  # Movemos el agente a la nueva posición
-                self.agent_dir = 0  # Actualizamos la dirección del agente 
-            '''else:
-                reward_brain1 -= 0.1  # Penalizamos a Cerebro 1 por chocar con paredes u objetos no atravesables'''
+                self.agent_dir = 0  # Actualizamos la dirección del agente
+                reward_brain1 -= 0.1
+            else:
+                reward_brain1 -= 0.2  # Penalizamos a Cerebro 1 por chocar con paredes u objetos no atravesables
 
         # Obtenemos el objeto en la celda actual donde está el agente
         current_cell = self.grid.get(*self.agent_pos)
