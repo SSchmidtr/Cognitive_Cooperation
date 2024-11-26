@@ -2,7 +2,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pickle
 from combined_envV2 import CombinedEnv
-from sklearn.linear_model import LogisticRegression
 from numba import njit
 
 # Funciones auxiliares compiladas con Numba
@@ -20,13 +19,6 @@ def compute_advantages(rewards, values, next_value, gamma):
         returns[t] = Gt
     advantages = returns - values
     return advantages, returns
-
-@njit
-def adjust_probs_for_prediction(probs, predicted_action):
-    adjusted_probs = np.ones_like(probs) * 0.1
-    adjusted_probs[predicted_action] += 0.9  # Fomentar la acción predicha
-    adjusted_probs /= adjusted_probs.sum()
-    return adjusted_probs
 
 @njit
 def update_policy_numba(policy_logits, actions, old_log_probs, returns, advantages, learning_rate, epsilon, value_function_values):
@@ -64,17 +56,14 @@ class BrainPolicy:
         self.action_space = action_space
         self.learning_rate = learning_rate
         self.gamma = gamma
-        self.epsilon = epsilon  # Clipping factor for PPO
+        self.epsilon = epsilon  # Factor de clipping para PPO
         self.policy = {}
         self.value_function = {}
         self.loss_history = []
 
-        # Modelo para predecir acciones del otro cerebro
-        self.other_brain_model = LogisticRegression(max_iter=1000)
-
-        # Datos para entrenar el modelo predictivo
-        self.training_data_states = []
-        self.training_data_actions = []
+        # Diccionarios para almacenar las frecuencias y probabilidades de las acciones del otro agente
+        self.other_agent_action_counts = {}
+        self.other_agent_action_probs = {}
 
     def get_action(self, state, predicted_other_action=None):
         state_key = tuple(state.flatten())
@@ -85,24 +74,60 @@ class BrainPolicy:
         logits = self.policy[state_key]
         probs = softmax(logits)
 
-        # Si se da una predicción, ajusta las probabilidades
+        # Si hay una predicción, ajustamos las probabilidades
         if predicted_other_action is not None:
-            probs = adjust_probs_for_prediction(probs, predicted_other_action)
+            probs = self.adjust_probs_for_prediction(probs, predicted_other_action)
 
-        # Normalizar para asegurarse de que sumen a 1
+        # Normalizamos las probabilidades
         probs = probs / probs.sum()
 
-        # Validación: Asegúrate de que las probabilidades sean válidas
+        # Validación: aseguramos que las probabilidades sumen 1
         if not np.isclose(probs.sum(), 1):
-            raise ValueError("Probabilities do not sum to 1 after normalization.")
+            raise ValueError("Las probabilidades no suman 1 después de la normalización.")
 
         action = np.random.choice(self.action_space.n, p=probs)
         log_prob = np.log(probs[action])
 
         return action, log_prob, self.value_function[state_key]
 
+    def adjust_probs_for_prediction(self, probs, predicted_action):
+        adjusted_probs = np.copy(probs)
+        adjusted_probs[predicted_action] += 0.1  # Fomentamos la acción predicha
+        adjusted_probs = np.clip(adjusted_probs, 0, None)
+        adjusted_probs /= adjusted_probs.sum()
+        return adjusted_probs
+
+    def predict_other_action(self, other_state):
+        state_key = tuple(other_state.flatten())
+        if state_key in self.other_agent_action_probs:
+            action_probs = self.other_agent_action_probs[state_key]
+            predicted_action = np.random.choice(self.action_space.n, p=action_probs)
+        else:
+            # Si no tenemos datos, elegimos una acción aleatoria
+            predicted_action = np.random.randint(0, self.action_space.n)
+        return predicted_action
+
+    def update_other_agent_model(self):
+        # Actualizamos las probabilidades basadas en los recuentos
+        for state_key, action_counts in self.other_agent_action_counts.items():
+            total_counts = np.sum(action_counts)
+            if total_counts > 0:
+                self.other_agent_action_probs[state_key] = action_counts / total_counts
+            else:
+                # Si no se han observado acciones, asignamos probabilidades uniformes
+                self.other_agent_action_probs[state_key] = np.ones(self.action_space.n) / self.action_space.n
+
+        # Limpiamos los recuentos para evitar problemas de memoria
+        self.other_agent_action_counts = {}
+
+    def record_other_agent_action(self, other_state, other_action):
+        state_key = tuple(other_state.flatten())
+        if state_key not in self.other_agent_action_counts:
+            self.other_agent_action_counts[state_key] = np.zeros(self.action_space.n)
+        self.other_agent_action_counts[state_key][other_action] += 1
+
     def update_policy(self, states, actions, old_log_probs, returns, advantages):
-        # Preparar datos para Numba
+        # Preparamos los datos para Numba
         policy_logits = []
         value_function_values = []
         for state in states:
@@ -117,45 +142,18 @@ class BrainPolicy:
         returns = np.array(returns)
         advantages = np.array(advantages)
 
-        # Actualizar política y valor usando Numba
+        # Actualizamos la política y la función de valor usando Numba
         updated_logits, updated_values, loss_history = update_policy_numba(
             policy_logits, actions, old_log_probs, returns, advantages,
             self.learning_rate, self.epsilon, value_function_values
         )
 
-        # Actualizar los diccionarios con los valores actualizados
+        # Actualizamos los diccionarios con los valores actualizados
         for i, state in enumerate(states):
             state_key = tuple(state.flatten())
             self.policy[state_key] = updated_logits[i]
             self.value_function[state_key] = updated_values[i]
             self.loss_history.append(loss_history[i])
-            
-    def update_other_brain_model(self):
-        # Verifica que haya datos suficientes para entrenar
-        if len(self.training_data_states) > 0 and len(self.training_data_actions) > 0:
-            X = np.array([state.flatten() for state in self.training_data_states])
-            y = np.array(self.training_data_actions)
-
-            # Verificar número de clases en y
-            unique_classes = np.unique(y)
-            if len(unique_classes) > 1:
-                # Ajusta el modelo predictivo
-                self.other_brain_model.fit(X, y)
-            else:
-                print("No hay suficientes clases para entrenar el modelo predictivo.")
-
-            # Limpiar datos para evitar consumo excesivo de memoria
-            self.training_data_states = []
-            self.training_data_actions = []
-
-
-    def predict_other_action(self, other_state):
-        # Verificar si el modelo está entrenado
-        if not hasattr(self.other_brain_model, 'coef_'):
-            # Si no está entrenado, devuelve una acción aleatoria
-            return np.random.randint(0, self.action_space.n)
-        # Si está entrenado, utiliza el modelo para predecir la acción
-        return self.other_brain_model.predict([other_state.flatten()])[0]
 
     def save_policy(self, filename):
         with open(filename, 'wb') as f:
@@ -164,9 +162,9 @@ class BrainPolicy:
     def plot_loss(self):
         plt.figure()
         plt.plot(self.loss_history)
-        plt.title("Policy Loss over Episodes")
-        plt.xlabel("Episode")
-        plt.ylabel("Loss")
+        plt.title("Pérdida de la Política a lo largo de los Episodios")
+        plt.xlabel("Episodio")
+        plt.ylabel("Pérdida")
         plt.show()
 
 class CombinedAgent:
@@ -220,17 +218,15 @@ class CombinedAgent:
                 values_brain1.append(value1)
                 values_brain2.append(value2)
 
-                # Guardar datos para el modelo predictivo
-                self.brain1.training_data_states.append(state['brain1'])
-                self.brain1.training_data_actions.append(brain2_action)
-                self.brain2.training_data_states.append(state['brain2'])
-                self.brain2.training_data_actions.append(brain1_action)
+                # Registramos la acción del otro agente para actualizar el modelo
+                self.brain1.record_other_agent_action(state['brain1'], brain2_action)
+                self.brain2.record_other_agent_action(state['brain2'], brain1_action)
 
                 state = next_state
 
-            # Actualizar modelos predictivos
-            self.brain1.update_other_brain_model()
-            self.brain2.update_other_brain_model()
+            # Actualizamos los modelos del otro agente
+            self.brain1.update_other_agent_model()
+            self.brain2.update_other_agent_model()
 
             next_state_brain1 = next_state['brain1']
             next_state_brain2 = next_state['brain2']
@@ -261,7 +257,7 @@ class CombinedAgent:
             )
 
             reward_history.append(total_reward)
-            print(f"Episode {episode + 1}/{num_episodes}, Total Reward: {total_reward}")
+            print(f"Episodio {episode + 1}/{num_episodes}, Recompensa Total: {total_reward}")
 
         self.brain1.save_policy('brain1_policy.pkl')
         self.brain2.save_policy('brain2_policy.pkl')
@@ -270,14 +266,14 @@ class CombinedAgent:
 
     def plot_trend_line(self, rewards):
         plt.figure()
-        plt.plot(rewards, label="Reward")
+        plt.plot(rewards, label="Recompensa")
         window_size = 100
         if len(rewards) >= window_size:
             moving_avg = np.convolve(rewards, np.ones(window_size) / window_size, mode='valid')
-            plt.plot(range(len(moving_avg)), moving_avg, color='red', label="Trend (Moving Average)")
-        plt.title("Rewards over Training Episodes with Trend")
-        plt.xlabel("Episode")
-        plt.ylabel("Total Reward")
+            plt.plot(range(len(moving_avg)), moving_avg, color='red', label="Tendencia (Media Móvil)")
+        plt.title("Recompensas a lo largo de los Episodios de Entrenamiento con Tendencia")
+        plt.xlabel("Episodio")
+        plt.ylabel("Recompensa Total")
         plt.legend()
         plt.show()
 
@@ -285,7 +281,7 @@ class CombinedAgent:
     def main():
         env = CombinedEnv()
         agent = CombinedAgent(env)
-        num_episodes = 3000
+        num_episodes = 5000
         reward_history = agent.train(num_episodes=num_episodes)
 
 if __name__ == "__main__":
