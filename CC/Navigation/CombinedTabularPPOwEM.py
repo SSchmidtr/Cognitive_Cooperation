@@ -2,7 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pickle
 from combined_envV2 import CombinedEnv
-from numba import njit, prange
+from sklearn.linear_model import LogisticRegression
+from numba import njit
 
 # Funciones auxiliares compiladas con Numba
 @njit
@@ -21,51 +22,61 @@ def compute_advantages(rewards, values, next_value, gamma):
     return advantages, returns
 
 @njit
-def update_policy_numba(policy_logits, actions, old_log_probs, returns, advantages, learning_rate, epsilon, value_function_values, value_learning_rate, max_inner_iterations):
+def adjust_probs_for_prediction(probs, predicted_action):
+    adjusted_probs = np.ones_like(probs) * 0.1
+    adjusted_probs[predicted_action] += 0.9  # Fomentar la acción predicha
+    adjusted_probs /= adjusted_probs.sum()
+    return adjusted_probs
+
+@njit
+def update_policy_numba(policy_logits, actions, old_log_probs, returns, advantages, learning_rate, epsilon, value_function_values):
     loss_history = []
     for i in range(len(actions)):
-        inner_iteration = 0
-        while True:
-            logits = policy_logits[i]
-            probs = softmax(logits)
-            new_prob = probs[actions[i]]
-            old_prob = np.exp(old_log_probs[i])
-            ratio = new_prob / old_prob
+        logits = policy_logits[i]
+        probs = softmax(logits)
+        new_prob = probs[actions[i]]
+        old_prob = np.exp(old_log_probs[i])
+        ratio = new_prob / old_prob
 
-            if ((advantages[i] >= 0 and ratio <= 1 + epsilon) or
-                (advantages[i] < 0 and ratio >= 1 - epsilon)):
-                surr = ratio * advantages[i]
-                actor_loss = -surr
+        # Clipping para PPO
+        if ((advantages[i] >= 0 and ratio <= 1 + epsilon) or
+            (advantages[i] < 0 and ratio >= 1 - epsilon)):
+            surr = ratio * advantages[i]
+            actor_loss = -surr
 
-                one_hot = np.zeros_like(probs)
-                one_hot[actions[i]] = 1
-                delta_vector = one_hot - probs
-                grad = (advantages[i] / old_prob) * new_prob * delta_vector
+            # Gradiente y actualización
+            one_hot = np.zeros_like(probs)
+            one_hot[actions[i]] = 1
+            delta_vector = one_hot - probs
+            grad = (advantages[i] / old_prob) * new_prob * delta_vector
+            policy_logits[i] += learning_rate * grad
 
-                policy_logits[i] += learning_rate * grad
+            # Actualizar función de valor
+            value_function_values[i] += learning_rate * (returns[i] - value_function_values[i])
 
-                value_function_values[i] += value_learning_rate * (returns[i] - value_function_values[i])
-
-                inner_iteration += 1
-                if inner_iteration >= max_inner_iterations:
-                    break
-            else:
-                break
-        loss_history.append(actor_loss)
+            loss_history.append(actor_loss)
+        else:
+            loss_history.append(0.0)
     return policy_logits, value_function_values, loss_history
 
 class BrainPolicy:
-    def __init__(self, action_space, learning_rate=0.01, value_learning_rate=0.1, gamma=0.99, epsilon=0.2):
+    def __init__(self, action_space, learning_rate=0.01, gamma=0.99, epsilon=0.2):
         self.action_space = action_space
         self.learning_rate = learning_rate
-        self.value_learning_rate = value_learning_rate
         self.gamma = gamma
-        self.epsilon = epsilon
-        self.policy = {}  # Diccionario para almacenar los logits de la política
-        self.value_function = {}  # Diccionario para almacenar los valores de estado
+        self.epsilon = epsilon  # Clipping factor for PPO
+        self.policy = {}
+        self.value_function = {}
         self.loss_history = []
 
-    def get_action(self, state):
+        # Modelo para predecir acciones del otro cerebro
+        self.other_brain_model = LogisticRegression(max_iter=1000)
+
+        # Datos para entrenar el modelo predictivo
+        self.training_data_states = []
+        self.training_data_actions = []
+
+    def get_action(self, state, predicted_other_action=None):
         state_key = tuple(state.flatten())
         if state_key not in self.policy:
             self.policy[state_key] = np.zeros(self.action_space.n)
@@ -73,14 +84,24 @@ class BrainPolicy:
 
         logits = self.policy[state_key]
         probs = softmax(logits)
+
+        # Si se da una predicción, ajusta las probabilidades
+        if predicted_other_action is not None:
+            probs = adjust_probs_for_prediction(probs, predicted_other_action)
+
+        # Normalizar para asegurarse de que sumen a 1
+        probs = probs / probs.sum()
+
+        # Validación: Asegúrate de que las probabilidades sean válidas
+        if not np.isclose(probs.sum(), 1):
+            raise ValueError("Probabilities do not sum to 1 after normalization.")
+
         action = np.random.choice(self.action_space.n, p=probs)
         log_prob = np.log(probs[action])
 
         return action, log_prob, self.value_function[state_key]
 
     def update_policy(self, states, actions, old_log_probs, returns, advantages):
-        max_inner_iterations = 10
-
         # Preparar datos para Numba
         policy_logits = []
         value_function_values = []
@@ -99,8 +120,7 @@ class BrainPolicy:
         # Actualizar política y valor usando Numba
         updated_logits, updated_values, loss_history = update_policy_numba(
             policy_logits, actions, old_log_probs, returns, advantages,
-            self.learning_rate, self.epsilon, value_function_values,
-            self.value_learning_rate, max_inner_iterations
+            self.learning_rate, self.epsilon, value_function_values
         )
 
         # Actualizar los diccionarios con los valores actualizados
@@ -109,6 +129,33 @@ class BrainPolicy:
             self.policy[state_key] = updated_logits[i]
             self.value_function[state_key] = updated_values[i]
             self.loss_history.append(loss_history[i])
+            
+    def update_other_brain_model(self):
+        # Verifica que haya datos suficientes para entrenar
+        if len(self.training_data_states) > 0 and len(self.training_data_actions) > 0:
+            X = np.array([state.flatten() for state in self.training_data_states])
+            y = np.array(self.training_data_actions)
+
+            # Verificar número de clases en y
+            unique_classes = np.unique(y)
+            if len(unique_classes) > 1:
+                # Ajusta el modelo predictivo
+                self.other_brain_model.fit(X, y)
+            else:
+                print("No hay suficientes clases para entrenar el modelo predictivo.")
+
+            # Limpiar datos para evitar consumo excesivo de memoria
+            self.training_data_states = []
+            self.training_data_actions = []
+
+
+    def predict_other_action(self, other_state):
+        # Verificar si el modelo está entrenado
+        if not hasattr(self.other_brain_model, 'coef_'):
+            # Si no está entrenado, devuelve una acción aleatoria
+            return np.random.randint(0, self.action_space.n)
+        # Si está entrenado, utiliza el modelo para predecir la acción
+        return self.other_brain_model.predict([other_state.flatten()])[0]
 
     def save_policy(self, filename):
         with open(filename, 'wb') as f:
@@ -125,12 +172,15 @@ class BrainPolicy:
 class CombinedAgent:
     def __init__(self, env):
         self.env = env
-        self.brain1 = BrainPolicy(env.brain1_action_space, learning_rate=0.01, value_learning_rate=0.1)
-        self.brain2 = BrainPolicy(env.brain2_action_space, learning_rate=0.01, value_learning_rate=0.1)
+        self.brain1 = BrainPolicy(env.brain1_action_space)
+        self.brain2 = BrainPolicy(env.brain2_action_space)
 
     def get_combined_action(self, state):
-        brain_action1, log_prob1, value1 = self.brain1.get_action(state['brain1'])
-        brain_action2, log_prob2, value2 = self.brain2.get_action(state['brain2'])
+        predicted_action_brain2 = self.brain2.predict_other_action(state['brain2'])
+        brain_action1, log_prob1, value1 = self.brain1.get_action(state['brain1'], predicted_action_brain2)
+
+        predicted_action_brain1 = self.brain1.predict_other_action(state['brain1'])
+        brain_action2, log_prob2, value2 = self.brain2.get_action(state['brain2'], predicted_action_brain1)
 
         combined_action = self.env.combined_actions.index((brain_action1, brain_action2))
         return combined_action, log_prob1, log_prob2, value1, value2, brain_action1, brain_action2
@@ -154,19 +204,15 @@ class CombinedAgent:
 
             while not done:
                 combined_action, log_prob1, log_prob2, value1, value2, brain1_action, brain2_action = self.get_combined_action(state)
-                print(f"Episode: {episode + 1}, Action: {combined_action}, Brain 1 Action: {brain1_action}, Brain 2 Action: {brain2_action}")
                 next_obs, reward, terminated, truncated, _ = self.env.step(combined_action)
                 next_state = next_obs
                 done = terminated or truncated
-
-                brain1_action, brain2_action = self.env.combined_actions[combined_action]
 
                 reward_brain1, reward_brain2 = reward
                 total_reward += reward_brain1 + reward_brain2
 
                 rewards_brain1.append(reward_brain1)
                 rewards_brain2.append(reward_brain2)
-
                 episode_memory1.append((state['brain1'], brain1_action))
                 episode_memory2.append((state['brain2'], brain2_action))
                 log_probs_brain1.append(log_prob1)
@@ -174,7 +220,17 @@ class CombinedAgent:
                 values_brain1.append(value1)
                 values_brain2.append(value2)
 
+                # Guardar datos para el modelo predictivo
+                self.brain1.training_data_states.append(state['brain1'])
+                self.brain1.training_data_actions.append(brain2_action)
+                self.brain2.training_data_states.append(state['brain2'])
+                self.brain2.training_data_actions.append(brain1_action)
+
                 state = next_state
+
+            # Actualizar modelos predictivos
+            self.brain1.update_other_brain_model()
+            self.brain2.update_other_brain_model()
 
             next_state_brain1 = next_state['brain1']
             next_state_brain2 = next_state['brain2']
