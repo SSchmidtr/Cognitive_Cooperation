@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import pickle
 from combined_envV2 import CombinedEnv
 from numba import njit
+from collections import deque  # Importamos deque para los historiales
 
 # Funciones auxiliares compiladas con Numba
 @njit
@@ -14,7 +15,7 @@ def softmax(x):
 def compute_advantages(rewards, values, next_value, gamma):
     returns = np.zeros(len(rewards))
     Gt = next_value
-    for t in range(len(rewards) - 1, -1, -1):
+    for t in range(len(rewards) -1, -1, -1):
         Gt = rewards[t] + gamma * Gt
         returns[t] = Gt
     advantages = returns - values
@@ -173,6 +174,16 @@ class CombinedAgent:
         self.brain1 = BrainPolicy(env.brain1_action_space)
         self.brain2 = BrainPolicy(env.brain2_action_space)
 
+        # Historias para almacenar predicciones y acciones reales
+        self.brain1_prediction_history = deque(maxlen=500)
+        self.brain1_actual_action_history = deque(maxlen=500)
+        self.brain2_prediction_history = deque(maxlen=500)
+        self.brain2_actual_action_history = deque(maxlen=500)
+
+        # Listas para almacenar la precisión a lo largo del tiempo
+        self.brain1_accuracy_history = []
+        self.brain2_accuracy_history = []
+
     def get_combined_action(self, state):
         predicted_action_brain2 = self.brain2.predict_other_action(state['brain2'])
         brain_action1, log_prob1, value1 = self.brain1.get_action(state['brain1'], predicted_action_brain2)
@@ -181,7 +192,7 @@ class CombinedAgent:
         brain_action2, log_prob2, value2 = self.brain2.get_action(state['brain2'], predicted_action_brain1)
 
         combined_action = self.env.combined_actions.index((brain_action1, brain_action2))
-        return combined_action, log_prob1, log_prob2, value1, value2, brain_action1, brain_action2
+        return combined_action, log_prob1, log_prob2, value1, value2, brain_action1, brain_action2, predicted_action_brain2, predicted_action_brain1
 
     def train(self, num_episodes):
         reward_history = []
@@ -201,7 +212,7 @@ class CombinedAgent:
             rewards_brain2 = []
 
             while not done:
-                combined_action, log_prob1, log_prob2, value1, value2, brain1_action, brain2_action = self.get_combined_action(state)
+                combined_action, log_prob1, log_prob2, value1, value2, brain_action1, brain_action2, predicted_action_brain2, predicted_action_brain1 = self.get_combined_action(state)
                 next_obs, reward, terminated, truncated, _ = self.env.step(combined_action)
                 next_state = next_obs
                 done = terminated or truncated
@@ -211,22 +222,33 @@ class CombinedAgent:
 
                 rewards_brain1.append(reward_brain1)
                 rewards_brain2.append(reward_brain2)
-                episode_memory1.append((state['brain1'], brain1_action))
-                episode_memory2.append((state['brain2'], brain2_action))
+                episode_memory1.append((state['brain1'], brain_action1))
+                episode_memory2.append((state['brain2'], brain_action2))
                 log_probs_brain1.append(log_prob1)
                 log_probs_brain2.append(log_prob2)
                 values_brain1.append(value1)
                 values_brain2.append(value2)
 
                 # Registramos la acción del otro agente para actualizar el modelo
-                self.brain1.record_other_agent_action(state['brain1'], brain2_action)
-                self.brain2.record_other_agent_action(state['brain2'], brain1_action)
+                self.brain1.record_other_agent_action(state['brain1'], brain_action2)
+                self.brain2.record_other_agent_action(state['brain2'], brain_action1)
+
+                # Almacenar predicciones y acciones reales para calcular la precisión
+                self.brain1_prediction_history.append(predicted_action_brain2)
+                self.brain1_actual_action_history.append(brain_action2)
+                self.brain2_prediction_history.append(predicted_action_brain1)
+                self.brain2_actual_action_history.append(brain_action1)
 
                 state = next_state
 
             # Actualizamos los modelos del otro agente
             self.brain1.update_other_agent_model()
             self.brain2.update_other_agent_model()
+
+            # Calcular precisión después de cada episodio
+            brain1_accuracy, brain2_accuracy = self.compute_prediction_accuracy()
+            self.brain1_accuracy_history.append(brain1_accuracy)
+            self.brain2_accuracy_history.append(brain2_accuracy)
 
             next_state_brain1 = next_state['brain1']
             next_state_brain2 = next_state['brain2']
@@ -259,10 +281,27 @@ class CombinedAgent:
             reward_history.append(total_reward)
             print(f"Episodio {episode + 1}/{num_episodes}, Recompensa Total: {total_reward}")
 
+            # Cada 100 episodios, mostramos la precisión
+            if (episode + 1) % 100 == 0:
+                print(f"Precisión de Brain1 en los últimos 500 pasos: {brain1_accuracy:.2f}")
+                print(f"Precisión de Brain2 en los últimos 500 pasos: {brain2_accuracy:.2f}")
+
         self.brain1.save_policy('brain1_policy.pkl')
         self.brain2.save_policy('brain2_policy.pkl')
         self.plot_trend_line(reward_history)
+        self.plot_accuracy_trend()
         return reward_history
+
+    def compute_prediction_accuracy(self):
+        if len(self.brain1_actual_action_history) == 0:
+            return 0.0, 0.0
+        brain1_correct = sum(p == a for p, a in zip(self.brain1_prediction_history, self.brain1_actual_action_history))
+        brain1_accuracy = brain1_correct / len(self.brain1_actual_action_history)
+
+        brain2_correct = sum(p == a for p, a in zip(self.brain2_prediction_history, self.brain2_actual_action_history))
+        brain2_accuracy = brain2_correct / len(self.brain2_actual_action_history)
+
+        return brain1_accuracy, brain2_accuracy
 
     def plot_trend_line(self, rewards):
         plt.figure()
@@ -277,12 +316,31 @@ class CombinedAgent:
         plt.legend()
         plt.show()
 
+    def plot_accuracy_trend(self):
+        plt.figure()
+        window_size = 400
+        if len(self.brain1_accuracy_history) >= window_size:
+            brain1_moving_avg = np.convolve(self.brain1_accuracy_history, np.ones(window_size) / window_size, mode='valid')
+            brain2_moving_avg = np.convolve(self.brain2_accuracy_history, np.ones(window_size) / window_size, mode='valid')
+            plt.plot(range(window_size - 1, len(self.brain1_accuracy_history)), brain1_moving_avg, color='red', label="Media Móvil Brain1")
+            plt.plot(range(window_size - 1, len(self.brain2_accuracy_history)), brain2_moving_avg, color='green', label="Media Móvil Brain2")
+
+        plt.title("Evolución de la Precisión de las Predicciones")
+        plt.xlabel("Episodio")
+        plt.ylabel("Precisión")
+        plt.legend()
+        plt.show()
+
+    def last100_average_reward(self, rewards):
+        return np.mean(rewards[-100:])
+    
     @staticmethod
     def main():
         env = CombinedEnv()
         agent = CombinedAgent(env)
-        num_episodes = 5000
+        num_episodes = 50000
         reward_history = agent.train(num_episodes=num_episodes)
+        print(f"Recompensa promedio en los últimos 100 episodios: {agent.last100_average_reward(reward_history)}")
 
 if __name__ == "__main__":
     CombinedAgent.main()
